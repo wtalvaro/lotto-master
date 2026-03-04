@@ -283,7 +283,7 @@ done <<< "$frequencia_gerados"
 
 # Imprime o Relatório Customizado
 if [ -n "$dez_100" ]; then
-    echo -e "\033[1;32m🔥 Ss dezenas [ $dez_100] apareceram em 100% dos jogos gerados!\033[0m"
+    echo -e "\033[1;32m🔥 As dezenas [ $dez_100] apareceram em 100% dos jogos gerados!\033[0m"
     echo -e "   Estas são as suas bases absolutas para esta rodada."
 else
     echo -e "\033[1;33m⚠️ Nenhuma dezena cravou 100% de presença nestes jogos.\033[0m"
