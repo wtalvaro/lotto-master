@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # =========================================================
-# LOTOFÁCIL MASTER PRO v4.5 - Data Science & Estocástica
+# LOTOFÁCIL MASTER PRO v4.9 - Data Science & Estocástica
 # Fusão Híbrida: Posicionais + Backtesting + Filtros + CSV
+# Arquitetura Otimizada (Não-Interativa, Getopts, Math Nativa & Regex)
 # =========================================================
 
 set -u
@@ -31,11 +32,7 @@ sort_array() {
     done
 }
 
-# =========================================================
-# FUNÇÃO DE AJUDA E DOCUMENTAÇÃO TÉCNICA (--help)
-# =========================================================
 show_help() {
-    # Declaração de variáveis locais para paleta de cores ANSI
     local C_CYAN="\033[1;36m"
     local C_GREEN="\033[1;32m"
     local C_YELLOW="\033[1;33m"
@@ -45,11 +42,10 @@ show_help() {
     local C_ITALIC="\033[3m"
     local C_RESET="\033[0m"
 
-    # Impressão do Here Document processando as variáveis de cor
     echo -e "$(cat << EOF
 
 ${C_CYAN}======================================================================${C_RESET}
-${C_GREEN} 🎲 LOTOFÁCIL MASTER PRO - MANUAL DO USUÁRIO & DOCS (v4.5) ${C_RESET}
+${C_GREEN} 🎲 LOTOFÁCIL MASTER PRO - MANUAL DO USUÁRIO & DOCS (v4.9) ${C_RESET}
 ${C_CYAN}======================================================================${C_RESET}
 
 ${C_YELLOW}📌 DESCRIÇÃO GERAL${C_RESET}
@@ -59,7 +55,7 @@ ${C_YELLOW}📌 DESCRIÇÃO GERAL${C_RESET}
 
 ${C_YELLOW}⚙️  LÓGICA E FUNCIONAMENTO (Filtros Avançados)${C_RESET}
   ${C_BLUE}• Padrão dos Nove Números:${C_RESET} Fixa a base nas dezenas ${C_BOLD}05, 06, 07, 12, 13,
-    14, 19, 20 e 21${C_RESET}. O algoritmo permite selecionar subconjuntos (4 ou 6)
+    14, 19, 20 e 21${C_RESET}. O algoritmo permite selecionar subconjuntos (4, 5 ou 6)
     desses números como âncora de segurança para a geração dos jogos.
   ${C_BLUE}• Filtros Estatísticos Estocásticos:${C_RESET}
     - ${C_ITALIC}Equilíbrio Par/Ímpar:${C_RESET} Mantém a proporção harmônica no volante.
@@ -89,23 +85,27 @@ ${C_YELLOW}💻 EXEMPLOS DE EXECUÇÃO${C_RESET}
   ${C_DIM}↳ Gera 20 jogos com média >= 9.2 nos últimos 50 concursos e cravando
     entre 8 a 9 repetidas do último sorteio.${C_RESET}
 
-  ${C_GREEN}[5] Execução Híbrida (Flag -m + Modo Manual):${C_RESET}
+  ${C_GREEN}[5] Foco Estatístico (Alta Probabilidade no Padrão dos Nove):${C_RESET}
+  $ ${C_BOLD}$0 -m 5${C_RESET}
+  ${C_DIM}↳ Justificativa: Padrão de maior frequência histórica e recente (~32%).${C_RESET}
+
+  ${C_GREEN}[6] Execução Híbrida (Flag -m + Modo Manual):${C_RESET}
   $ ${C_BOLD}$0 -m 6 15 80 5 9.1 "9"${C_RESET}
   ${C_DIM}↳ Fixa 6 dezenas do Padrão dos Nove e aplica a ordem manual restante.${C_RESET}
 
-  ${C_GREEN}[6] Ajuda do Sistema:${C_RESET}
-  $ ${C_BOLD}$0 --help${C_RESET}
+  ${C_GREEN}[7] Ajuda do Sistema:${C_RESET}
+  $ ${C_BOLD}$0 -h${C_RESET}
   ${C_DIM}↳ Exibe este manual técnico sem limpar a tela.${C_RESET}
 
-  ${C_GREEN}[7] Modo de Exportação e Auditoria:${C_RESET}
-  Inicie o script em qualquer modo acima. Responda ${C_BOLD}'s'${C_RESET} ao prompt de
-  exportação CSV para salvar o histórico analítico na pasta ./analise/
+  ${C_GREEN}[8] Modo de Exportação e Auditoria Automática (Não-Interativo):${C_RESET}
+  $ ${C_BOLD}$0 -s ./minha_analise.csv${C_RESET}
+  ${C_DIM}↳ O script roda de forma contínua e salva o histórico analítico e os 
+    jogos gerados diretamente no caminho/arquivo especificado.${C_RESET}
 
 ${C_CYAN}======================================================================${C_RESET}
 EOF
 )"
     
-    # Encerra o script com sucesso de imediato, preservando o histórico do terminal
     exit 0
 }
 
@@ -131,16 +131,19 @@ print_dynamic_header() {
         echo -e "   \033[1;34m[✔]\033[0m Perfil Operacional: \033[1;35mMANUAL AVANÇADO (Análise: $ANALISE concursos)\033[0m"
     fi
 
+    if [[ "$EXPORTAR" -eq 1 ]]; then
+        echo -e "   \033[1;34m[✔]\033[0m Exportação Ativa: \033[1;32mSalvando em $ARQUIVO_CSV\033[0m"
+    fi
+
     echo -e "\033[1;36m───────────────────────────────────────────────────────────────────────\033[0m"
     echo -e " \033[3mPreparando matriz estocástica. Tratando jogo como investimento...\033[0m"
     echo -e "\033[1;36m───────────────────────────────────────────────────────────────────────\033[0m\n"
 }
 
 # =========================================================
-# PARSING DE ARGUMENTOS (Prioridade e Posicionais)
+# PARSING DE ARGUMENTOS COM GETOPTS E POSICIONAIS
 # =========================================================
 
-# Variáveis Default (Assumidas caso não haja argumentos)
 DEZENAS_CARTAO=15
 ANALISE=100
 QTD_JOGOS=10
@@ -148,42 +151,52 @@ MIN_MEDIA=9.0
 ALVO_REPETIDAS="8-10"
 MODO_PERFIL="default"
 MAGIC_9_MODE=""
+EXPORTAR=0
+ARQUIVO_CSV=""
 
-# 1. Verifica Ajuda
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    show_help
-fi
+# Suporte alternativo para --help
+for arg in "$@"; do
+    if [[ "$arg" == "--help" ]]; then show_help; fi
+done
 
-# 2. Verifica a flag -m (Padrão dos Nove)
-if [[ "${1:-}" == "-m" ]]; then
-    MAGIC_9_MODE=${2:-}
-    if [[ "$MAGIC_9_MODE" != "4" && "$MAGIC_9_MODE" != "6" ]]; then
-        echo -e "\033[1;31m[ERRO]\033[0m O Padrão dos Nove (-m) exige o valor 4 ou 6."
-        exit 1
-    fi
-    # O comando shift 2 remove o "-m" e o "valor" da fila de argumentos
-    # permitindo que os próximos argumentos virem o novo $1, $2, etc.
-    shift 2
-fi
+while getopts "hm:p:s:" opt; do
+    case $opt in
+        h)
+            show_help
+            ;;
+        m)
+            MAGIC_9_MODE=$OPTARG
+            if [[ "$MAGIC_9_MODE" != "4" && "$MAGIC_9_MODE" != "5" && "$MAGIC_9_MODE" != "6" ]]; then
+                echo -e "\033[1;31mErro:\033[0m O padrão -m aceita apenas os valores 4, 5 ou 6 com base em frequências estatísticas."
+                exit 1
+            fi
+            ;;
+        p)
+            MODO_PERFIL=$OPTARG
+            ;;
+        s)
+            EXPORTAR=1
+            ARQUIVO_CSV=$OPTARG
+            ;;
+        \?)
+            echo -e "\033[1;31m[ERRO]\033[0m Opção inválida."
+            exit 1
+            ;;
+    esac
+done
 
-# 3. Verifica Perfil (-p) ou processa Parâmetros Posicionais Manuais
-if [[ "${1:-}" == "-p" || "${1:-}" == "--profile" ]]; then
-    MODO_PERFIL=${2:-}
-    QTD_JOGOS=${3:-10} 
-    
-    if [[ "$MODO_PERFIL" == "explorador" || "$MODO_PERFIL" == "exp" ]]; then
-        MODO_PERFIL="explorador"
-        ANALISE=6
-        MIN_MEDIA=9.2
-    elif [[ "$MODO_PERFIL" == "conservador" ]]; then
-        ANALISE=100
-        MIN_MEDIA=9.0
-    else
-        echo -e "\033[1;31m[ERRO]\033[0m Perfil desconhecido. Use 'explorador' ou 'conservador'."
-        exit 1
-    fi
+shift $((OPTIND -1))
+
+if [[ "$MODO_PERFIL" == "explorador" || "$MODO_PERFIL" == "exp" ]]; then
+    MODO_PERFIL="explorador"
+    ANALISE=6
+    MIN_MEDIA=9.2
+    QTD_JOGOS=${1:-10}
+elif [[ "$MODO_PERFIL" == "conservador" ]]; then
+    ANALISE=100
+    MIN_MEDIA=9.0
+    QTD_JOGOS=${1:-10}
 elif [[ $# -gt 0 ]]; then
-    # MODO MANUAL: Captura os parâmetros posicionais restantes
     DEZENAS_CARTAO=${1:-15}
     ANALISE=${2:-100}
     QTD_JOGOS=${3:-10}
@@ -192,7 +205,28 @@ elif [[ $# -gt 0 ]]; then
     MODO_PERFIL="manual"
 fi
 
-# Tratamento do range de repetidas (ex: "8-9")
+# =========================================================
+# 1. VALIDAÇÃO DE INPUTS GERAIS (Segurança Total)
+# =========================================================
+
+if ! [[ "$DEZENAS_CARTAO" =~ ^[0-9]+$ ]] || ! [[ "$ANALISE" =~ ^[0-9]+$ ]] || ! [[ "$QTD_JOGOS" =~ ^[0-9]+$ ]]; then
+    echo -e "\033[1;31m[ERRO FATAL]\033[0m Parâmetros inválidos! [DEZENAS], [ANALISE] e [QTD_JOGOS] devem ser números inteiros."
+    exit 1
+fi
+
+# 1.1 Validação de Média Decimal (Aceita "9", "9.2" ou "9,2")
+if ! [[ "$MIN_MEDIA" =~ ^[0-9]+([.,][0-9]+)?$ ]]; then
+    echo -e "\033[1;31m[ERRO FATAL]\033[0m Parâmetro [MIN_MEDIA] inválido. Utilize um número inteiro ou decimal (ex: 9.0)."
+    exit 1
+fi
+
+# 1.2 Validação de Repetidas (Aceita "9" ou intervalo "8-10")
+if ! [[ "$ALVO_REPETIDAS" =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+    echo -e "\033[1;31m[ERRO FATAL]\033[0m Parâmetro [REPETIDAS] inválido. Utilize um número (ex: 9) ou intervalo (ex: 8-10)."
+    exit 1
+fi
+
+# Processamento pós-validação
 if [[ "$ALVO_REPETIDAS" == *"-"* ]]; then
     MIN_REP=$(echo "$ALVO_REPETIDAS" | cut -d'-' -f1)
     MAX_REP=$(echo "$ALVO_REPETIDAS" | cut -d'-' -f2)
@@ -235,24 +269,13 @@ echo -e "📌 \033[1;36mÚLTIMO SORTEIO:\033[0m ${resultado_oficial[*]}"
 echo "--------------------------------------------------"
 
 # =========================================================
-# MÓDULO DE EXPORTAÇÃO E AUDITORIA
+# MÓDULO DE EXPORTAÇÃO E AUDITORIA (NÃO-INTERATIVO)
 # =========================================================
-EXPORTAR=0
-ARQUIVO_CSV=""
 
-echo -e "\033[1;33m[ EXPORTAÇÃO DE DADOS ]\033[0m"
-read -p "Deseja exportar os jogos e o histórico para um arquivo CSV? [s/N]: " resp_export
-
-if [[ "$resp_export" =~ ^[Ss]$ ]]; then
-    EXPORTAR=1
-    read -p "Digite o caminho/nome do arquivo (ou pressione Enter para usar o padrão): " input_path
-    
-    if [[ -z "$input_path" ]]; then
-        mkdir -p "analise"
-        ARQUIVO_CSV="analise/${concurso_antigo}_${concurso_atual}.csv"
-    else
-        ARQUIVO_CSV="$input_path"
-    fi
+if [[ $EXPORTAR -eq 1 ]]; then
+    echo -e "\033[1;33m[ EXPORTAÇÃO DE DADOS ]\033[0m"
+    # Cria o diretório alvo, caso não exista
+    mkdir -p "$(dirname "$ARQUIVO_CSV")"
     
     echo "=== DADOS_DA_ANALISE ===" > "$ARQUIVO_CSV"
     echo "CONCURSO,D1,D2,D3,D4,D5,D6,D7,D8,D9,D10,D11,D12,D13,D14,D15" >> "$ARQUIVO_CSV"
@@ -261,7 +284,7 @@ if [[ "$resp_export" =~ ^[Ss]$ ]]; then
     printf "\n=== JOGOS_GERADOS ===\n" >> "$ARQUIVO_CSV"
     echo "ID_JOGO,D1,D2,D3,D4,D5,D6,D7,D8,D9,D10,D11,D12,D13,D14,D15,MEDIA_HIST,REPETIDAS,IMPARES,PRIMOS,M9" >> "$ARQUIVO_CSV"
     
-    echo -e "📝 \033[3mHistórico de $ANALISE concursos e jogos gravados em: $ARQUIVO_CSV\033[0m"
+    echo -e "📝 \033[3mHistórico de $ANALISE concursos e jogos será gravado em: $ARQUIVO_CSV\033[0m"
     echo "--------------------------------------------------"
 fi
 
@@ -287,11 +310,19 @@ declare -A jogos_gerados
 count_jogos=0
 tentativas=0
 
+MIN_MEDIA="${MIN_MEDIA//,/.}"
+MIN_MEDIA_INT=$(awk -v m="$MIN_MEDIA" 'BEGIN { printf "%.0f", m * 100 }')
+
 # =========================================================
 # MOTOR ESTOCÁSTICO FUNDIDO
 # =========================================================
 while [ $count_jogos -lt $QTD_JOGOS ]; do
+    
     ((tentativas++))
+    if (( tentativas > 500000 )); then
+        echo -e "\n\033[1;31m[ERRO CRÍTICO]\033[0m Paradoxo Estatístico detectado! Os filtros exigidos são restritivos demais e impossibilitam a geração matemática. Operação abortada."
+        break
+    fi
     
     declare -a candidate=()
     declare -A candidate_map=()
@@ -344,21 +375,23 @@ while [ $count_jogos -lt $QTD_JOGOS ]; do
             soma_acertos=$((soma_acertos + acertos_n))
         done
 
-        media_historica=$(echo "scale=2; $soma_acertos / $ANALISE" | bc)
+        media_historica_int=$(( (soma_acertos * 100) / ANALISE ))
 
-        if (( $(echo "$media_historica >= $MIN_MEDIA" | bc -l) )); then
+        if (( media_historica_int >= MIN_MEDIA_INT )); then
             jogos_gerados["$jogo_formatado"]=1
             ((count_jogos++))
 
             cor_acertos="\033[1;33m"
             [ "$acertos_ult" -ge 9 ] && cor_acertos="\033[1;32m"
 
+            media_historica_display=$(printf "%.2f" "$((media_historica_int))e-2")
+
             printf "\033[1;34m[JOGO %02d]\033[0m %s | \033[1;35mMédia: %s\033[0m | Rep: ${cor_acertos}%02d\033[0m | Ímp: %d | Pri: %d | M9: %d\n" \
-                "$count_jogos" "$jogo_formatado" "$media_historica" "$acertos_ult" "$impares" "$primos" "$m9_count"
+                "$count_jogos" "$jogo_formatado" "$media_historica_display" "$acertos_ult" "$impares" "$primos" "$m9_count"
             
             if [[ $EXPORTAR -eq 1 ]]; then
                 dezenas_csv=$(echo "$jogo_formatado" | tr ' ' ',')
-                echo "$count_jogos,$dezenas_csv,$media_historica,$acertos_ult,$impares,$primos,$m9_count" >> "$ARQUIVO_CSV"
+                echo "$count_jogos,$dezenas_csv,$media_historica_display,$acertos_ult,$impares,$primos,$m9_count" >> "$ARQUIVO_CSV"
             fi
         fi
     fi
@@ -382,13 +415,12 @@ dez_100=""
 dez_altas=""
 
 while read -r count dezena; do
-    perc=$(echo "scale=1; ($count / $QTD_JOGOS) * 100" | bc)
-    
-    if (( $(echo "$perc == 100.0" | bc -l) )); then
+    perc_int=$(( (count * 100) / QTD_JOGOS ))
+
+    if [[ $perc_int -eq 100 ]]; then
         dez_100+="$dezena "
-    elif (( $(echo "$perc >= 80.0" | bc -l) )); then
-        perc_clean=$(echo "$perc" | cut -d'.' -f1)
-        dez_altas+="$dezena ($perc_clean%) "
+    elif [[ $perc_int -ge 80 ]]; then
+        dez_altas+="$dezena (${perc_int}%) "
     fi
 done <<< "$frequencia_gerados"
 
