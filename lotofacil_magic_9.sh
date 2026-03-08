@@ -351,7 +351,7 @@ generate_engine() {
             fi
         fi
     done
-    log_success "Motor exigiu $tentativas micro-ciclos de força bruta guiada.\033[0m\n" >&2
+    log_success "Motor exigiu $tentativas micro-ciclos de força bruta guiada." >&2
     log_success "Processamento estocástico concluído: $QTD_JOGOS jogos gerados."
 }
 
