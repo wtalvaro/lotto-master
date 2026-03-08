@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# LOTOFÁCIL MASTER PRO - Motor Estocástico Nível Industrial (v10.0)
-# Arquitetura: Alta Performance O(1), Matriz de Metadados, Strict STDOUT Routing
+# LOTOFÁCIL MASTER PRO - Motor Estocástico Nível Industrial (v12.0)
+# Arquitetura: Zero-Fork Architecture, Nameref Duplo, Extrema Performance C-Like
 # ==============================================================================
 
 set -u
@@ -33,9 +33,10 @@ ALVO_REPETIDAS="8-10"
 MIN_REP=8
 MAX_REP=10
 
-# Arrays Associativos (Tabelas Hash em RAM O(1))
+# Arrays Associativos (Hash Maps O(1)) e Arrays Globais Indexados
 declare -A map_exclusividade
 declare -A jogos_gerados_sessao
+declare -a RESULTADO_PASSADO=()
 
 # ==============================================================================
 # ALGORITMOS NATIVOS E LOGGING (STDERR >&2)
@@ -133,6 +134,47 @@ validate_inputs() {
 }
 
 # ==============================================================================
+# INTEGRIDADE E CARREGAMENTO DE REFERÊNCIA HISTÓRICA
+# ==============================================================================
+extrair_ultimo_sorteio() {
+    local raw_json="$1"
+    local valores_do_json=""
+
+    valores_do_json=$(echo "$raw_json" | jq -r '.[0].dezenas | sort | join(" ")' 2>/dev/null)
+
+    if [[ -z "$valores_do_json" || "$valores_do_json" == "null" ]]; then
+        RESULTADO_PASSADO=() 
+        printf "\033[1;31m[ERRO] Falha ao capturar último sorteio para cálculo de repetidas.\033[0m\n" >&2
+    else
+        RESULTADO_PASSADO=($valores_do_json)
+    fi
+}
+
+# ⚡ OTIMIZAÇÃO CRÍTICA (Zero-Fork): Atribuição direta via Nameref Duplo
+calcular_repetidas() {
+    local -n jogo_candidato=$1
+    local -n var_retorno=$2 # Aponta diretamente para a memória do escopo chamador
+    local contagem=0
+    local dezena
+
+    if [[ ${#RESULTADO_PASSADO[@]} -eq 0 ]]; then
+        var_retorno=0
+        return
+    fi
+
+    local base_passada=" ${RESULTADO_PASSADO[*]} "
+
+    for dezena in "${jogo_candidato[@]}"; do
+        if [[ "$base_passada" =~ " $dezena " ]]; then
+            ((contagem++))
+        fi
+    done
+
+    # Atribuição O(1) sem uso de subshells (echo / $())
+    var_retorno=$contagem
+}
+
+# ==============================================================================
 # BOOTSTRAP: INDEXAÇÃO DE DADOS O(1) EM RAM
 # ==============================================================================
 bootstrap_data() {
@@ -157,11 +199,12 @@ bootstrap_data() {
     local concurso_atual=$(echo "$raw_data" | jq -r ".[0].concurso")
     local data_sorteio=$(echo "$raw_data" | jq -r ".[0].data")
     
-    mapfile -t RESULTADO_OFICIAL < <(echo "$raw_data" | jq -r ".[0].dezenas | sort | .[]")
+    extrair_ultimo_sorteio "$raw_data"
+    
     mapfile -t HISTORICO_CORTE < <(echo "$raw_data" | jq -r ".[0:$ANALISE] | .[].dezenas | sort | join(\" \")")
 
     log_info "Base Sincronizada: Concurso $concurso_atual ($data_sorteio)"
-    log_info "Último Sorteio: ${RESULTADO_OFICIAL[*]}"
+    log_info "Último Sorteio: ${RESULTADO_PASSADO[*]}"
     log_info "Indexando Hash Map de Integridade Estrita em RAM..."
 
     mapfile -t historico_completo < <(echo "$raw_data" | jq -r '.[].dezenas | sort | join(" ")')
@@ -178,7 +221,7 @@ bootstrap_data() {
         for ((i=0; i<count; i++)); do WEIGHTED_POOL+="$num "; done
     done <<< "$frequencia"
     
-    for d in "${RESULTADO_OFICIAL[@]}"; do
+    for d in "${RESULTADO_PASSADO[@]}"; do
         for i in {1..5}; do WEIGHTED_POOL+="$d "; done
     done
     
@@ -237,13 +280,18 @@ generate_engine() {
             continue
         fi
         
-        local impares=0 primos=0 m9_count=0 acertos_ult=0
+        # ⚡ Chamada Limpa (Zero-Fork)
+        local acertos_ult=0
+        calcular_repetidas candidate acertos_ult
         
+        if [[ "$acertos_ult" -lt "$MIN_REP" || "$acertos_ult" -gt "$MAX_REP" ]]; then continue; fi
+        
+        # Métricas embutidas usando pura expansão aritmética
+        local impares=0 primos=0 m9_count=0
         for n in "${candidate[@]}"; do
             (( 10#$n % 2 != 0 )) && ((impares++))
             [[ "$PRIMES_STR" =~ " $n " ]] && ((primos++))
             [[ "$MAGIC_9_STR" =~ " $n " ]] && ((m9_count++))
-            [[ " ${RESULTADO_OFICIAL[*]} " =~ " $n " ]] && ((acertos_ult++))
         done
         
         if [[ $impares -lt 7 || $impares -gt 9 ]]; then continue; fi
@@ -253,7 +301,6 @@ generate_engine() {
         else
             if [[ $m9_count -lt 4 || $m9_count -gt 6 ]]; then continue; fi
         fi
-        if [[ "$acertos_ult" -lt "$MIN_REP" || "$acertos_ult" -gt "$MAX_REP" ]]; then continue; fi
         
         local jogo_formatado="${candidate[*]}"
 
@@ -277,38 +324,34 @@ generate_engine() {
                 jogos_gerados_sessao["$jogo_formatado"]=1
                 ((count_jogos++))
 
-                local media_historica_display=$(printf "%.2f" "$((media_historica_int))e-2")
+                # ⚡ OTIMIZAÇÃO CRÍTICA (Zero-Fork): printf -v salva a saída diretamente na variável
+                local media_historica_display=""
+                printf -v media_historica_display "%.2f" "$((media_historica_int))e-2"
+                
                 local media_formatada="${media_historica_display/./,}"
                 local pares=$(( 15 - impares ))
                 
-                # Salvamento de Dados Brutos Isolado (CSV Background)
                 if [[ $EXPORTAR -eq 1 ]]; then
-                    local dezenas_csv=$(echo "$jogo_formatado" | tr ' ' ',')
+                    # ⚡ OTIMIZAÇÃO CRÍTICA (Zero-Fork): Parameter Expansion substitui "echo | tr"
+                    local dezenas_csv="${jogo_formatado// /,}"
                     local linha_csv="$count_jogos,$dezenas_csv,$media_historica_display,$acertos_ult,$impares,$primos,$m9_count"
                     echo "$linha_csv" >> "$ARQUIVO_CSV"
                 fi
 
                 # ==============================================================
-                # STDOUT: SAÍDA PRINCIPAL (Matriz de Auditoria)
-                # Smart Routing: Envia limpo para arquivos ou colorido no terminal
+                # STDOUT: Matriz de Alta Densidade Estritamente Roteada
                 # ==============================================================
                 if [[ ! -t 1 ]]; then
-                    # Sem ANSI (para arquivos de log limpos ex: > auditoria.txt)
                     printf "[JOGO %02d] → %s | Méd: %s | P: %d | I/P: %d/%d | M9: %d | R: %d\n" \
                         "$count_jogos" "$jogo_formatado" "$media_formatada" "$primos" "$impares" "$pares" "$m9_count" "$acertos_ult"
                 else
-                    # Com ANSI (para leitura visual destacada no Terminal)
                     printf "\033[1;32m[JOGO %02d]\033[0m → %s | \033[1mMéd:\033[0m %s | \033[1mP:\033[0m %d | \033[1mI/P:\033[0m %d/%d | \033[1mM9:\033[0m %d | \033[1mR:\033[0m %d\n" \
                         "$count_jogos" "$jogo_formatado" "$media_formatada" "$primos" "$impares" "$pares" "$m9_count" "$acertos_ult"
                 fi
             fi
         fi
     done
-
-    # ==============================================================================
-    # MÉTRICAS FINAIS DE SUCESSO E PERFORMANCE (Via STDERR)
-    # ==============================================================================
-    log_success "Motor exigiu $tentativas micro-ciclos de força bruta guiada." >&2
+    log_success "Motor exigiu $tentativas micro-ciclos de força bruta guiada.\033[0m\n" >&2
     log_success "Processamento estocástico concluído: $QTD_JOGOS jogos gerados."
 }
 
