@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# LOTOFÁCIL MASTER PRO - Motor Estocástico Nível Industrial (v12.0)
-# Arquitetura: Zero-Fork Architecture, Nameref Duplo, Extrema Performance C-Like
+# LOTOFÁCIL MASTER PRO - Motor Estocástico Nível Industrial (v15.0)
+# Arquitetura: Zero-Fork, Nameref Duplo, Header Consolidado (UX Clean)
 # ==============================================================================
 
 set -u
@@ -66,24 +66,25 @@ show_help() {
 Uso: $0 [OPÇÕES] [DEZENAS] [ANALISE] [QTD_JOGOS] [MIN_MEDIA] [REPETIDAS]
 
 FILTROS ATIVOS POR PADRÃO:
+  - Repetidas: ATIVO (Travado no Padrão Ouro conforme perfil)
   - Tendência de Extremidades: ATIVO (01-04 | 22-25)
   - Exclusividade Histórica: ATIVO (Bloqueio de repetidos)
 
 OPÇÕES:
   -a          Desativa o bloqueio de exclusividade.
   -m [VALOR]  Fixa a quantidade de dezenas do Padrão dos Nove (4, 5 ou 6).
-  -p [PERFIL] Carrega perfil de aposta (explorador | conservador).
+  -p [PERFIL] Carrega perfil de aposta (explorador [9] | conservador [9]).
   -s [ARQ]    Salva dados brutos no CSV de forma independente.
   -h          Exibe este menu de ajuda.
 
 EXEMPLO MANUAL E REDIRECIONAMENTO UNIX (Auditoria):
-  $0 -m 5 15 50 20 9.2 "8-9" > relatorio_auditoria.txt
+  $0 -p explorador 10 > meus_jogos_ouro.txt
 EOF
     exit 0
 }
 
 # ==============================================================================
-# PARSING DE ARGUMENTOS CLI
+# PARSING DE ARGUMENTOS CLI & SETUP DE PERFIS (PADRÃO OURO)
 # ==============================================================================
 parse_arguments() {
     while getopts "ahm:p:s:" opt; do
@@ -105,10 +106,11 @@ parse_arguments() {
 
     shift $((OPTIND - 1))
 
+    # Calibragem Estrita de Perfil: ALVO_REPETIDAS configurado para 9
     if [[ "$MODO_PERFIL" == "explorador" ]]; then
-        ANALISE=6; MIN_MEDIA=9.2; QTD_JOGOS=${1:-10}
+        ANALISE=6; MIN_MEDIA=9.2; QTD_JOGOS=${1:-10}; ALVO_REPETIDAS="9"
     elif [[ "$MODO_PERFIL" == "conservador" ]]; then
-        ANALISE=100; MIN_MEDIA=9.0; QTD_JOGOS=${1:-10}
+        ANALISE=100; MIN_MEDIA=9.0; QTD_JOGOS=${1:-10}; ALVO_REPETIDAS="9"
     elif [[ $# -gt 0 ]]; then
         DEZENAS_CARTAO=${1:-15}
         ANALISE=${2:-100}
@@ -124,6 +126,7 @@ validate_inputs() {
         log_error "Parâmetros [DEZENAS], [ANALISE] e [QTD_JOGOS] devem ser inteiros."
         exit 1
     fi
+    
     if [[ "$ALVO_REPETIDAS" == *"-"* ]]; then
         MIN_REP=$(echo "$ALVO_REPETIDAS" | cut -d'-' -f1)
         MAX_REP=$(echo "$ALVO_REPETIDAS" | cut -d'-' -f2)
@@ -150,10 +153,10 @@ extrair_ultimo_sorteio() {
     fi
 }
 
-# ⚡ OTIMIZAÇÃO CRÍTICA (Zero-Fork): Atribuição direta via Nameref Duplo
+# OTIMIZAÇÃO CRÍTICA (Zero-Fork): Atribuição direta via Nameref Duplo
 calcular_repetidas() {
     local -n jogo_candidato=$1
-    local -n var_retorno=$2 # Aponta diretamente para a memória do escopo chamador
+    local -n var_retorno=$2
     local contagem=0
     local dezena
 
@@ -170,7 +173,6 @@ calcular_repetidas() {
         fi
     done
 
-    # Atribuição O(1) sem uso de subshells (echo / $())
     var_retorno=$contagem
 }
 
@@ -239,14 +241,19 @@ generate_engine() {
     local min_media_clean="${MIN_MEDIA//,/.}"
     local min_media_int=$(awk -v m="$min_media_clean" 'BEGIN { printf "%.0f", m * 100 }')
 
-    local status_exc="Exclusividade Histórica"
-    [[ $ALLOW_REPEATED -eq 1 ]] && status_exc="Permite Repetidos"
+    local range_display="$MIN_REP"
+    [[ "$MIN_REP" != "$MAX_REP" ]] && range_display="$MIN_REP-$MAX_REP"
     
-    local status_m9="Dinâmico 4-6"
-    [[ -n "$MAGIC_9_MODE" ]] && status_m9="$MAGIC_9_MODE"
+    # ==============================================================================
+    # HEADER CONSOLIDADO (Padrão UX Clean)
+    # ==============================================================================
+    log_info "Filtros ativos: Extremidades | Exclusividade Histórica | Padrão 9 | Primos | Paridade."
     
-    log_info "Filtros ativos: Extremidades | $status_exc | Padrão 9 ($status_m9 dezenas) | Primos (5-7) | Paridade (7-9 ímpares)."
-    log_info "Perfil Operacional carregado: ${MODO_PERFIL^^} (Análise: $ANALISE concursos)."
+    local msg_perfil
+    # Formatação alinhada via printf injetada em variável para evitar subshell $(...)
+    printf -v msg_perfil "Perfil Operacional: %-11s | Análise: %-3d concursos | Alvo: %s Repetidas." "${MODO_PERFIL^^}" "$ANALISE" "$range_display"
+    log_info "$msg_perfil"
+    
     log_info "Iniciando processamento estocástico guiado..."
 
     if [[ $EXPORTAR -eq 1 ]]; then
@@ -276,17 +283,17 @@ generate_engine() {
         
         sort_numeric_array candidate
         
+        # Filtro de Extremidades Estrito (Bola 1: 01-04 | Bola 15: 22-25)
         if (( 10#${candidate[0]} > 4 || 10#${candidate[DEZENAS_CARTAO-1]} < 22 )); then 
             continue
         fi
         
-        # ⚡ Chamada Limpa (Zero-Fork)
+        # ⚡ Validação Estrita do Padrão Ouro via Nameref
         local acertos_ult=0
         calcular_repetidas candidate acertos_ult
         
         if [[ "$acertos_ult" -lt "$MIN_REP" || "$acertos_ult" -gt "$MAX_REP" ]]; then continue; fi
         
-        # Métricas embutidas usando pura expansão aritmética
         local impares=0 primos=0 m9_count=0
         for n in "${candidate[@]}"; do
             (( 10#$n % 2 != 0 )) && ((impares++))
@@ -324,7 +331,6 @@ generate_engine() {
                 jogos_gerados_sessao["$jogo_formatado"]=1
                 ((count_jogos++))
 
-                # ⚡ OTIMIZAÇÃO CRÍTICA (Zero-Fork): printf -v salva a saída diretamente na variável
                 local media_historica_display=""
                 printf -v media_historica_display "%.2f" "$((media_historica_int))e-2"
                 
@@ -332,7 +338,6 @@ generate_engine() {
                 local pares=$(( 15 - impares ))
                 
                 if [[ $EXPORTAR -eq 1 ]]; then
-                    # ⚡ OTIMIZAÇÃO CRÍTICA (Zero-Fork): Parameter Expansion substitui "echo | tr"
                     local dezenas_csv="${jogo_formatado// /,}"
                     local linha_csv="$count_jogos,$dezenas_csv,$media_historica_display,$acertos_ult,$impares,$primos,$m9_count"
                     echo "$linha_csv" >> "$ARQUIVO_CSV"
@@ -351,8 +356,9 @@ generate_engine() {
             fi
         fi
     done
+
     log_success "Motor exigiu $tentativas micro-ciclos de força bruta guiada." >&2
-    log_success "Processamento estocástico concluído: $QTD_JOGOS jogos gerados."
+    log_success "Processamento estocástico concluído: $QTD_JOGOS jogos gerados." >&2
 }
 
 # ==============================================================================
