@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# LOTOFÁCIL MASTER PRO - Motor Estocástico Nível Industrial (v9.1)
-# Arquitetura: Alta Performance O(1), Clean UX, Smart STDOUT/STDERR Routing
-# Novo: Métrica de Micro-ciclos (Transparência de Performance)
+# LOTOFÁCIL MASTER PRO - Motor Estocástico Nível Industrial (v10.0)
+# Arquitetura: Alta Performance O(1), Matriz de Metadados, Strict STDOUT Routing
 # ==============================================================================
 
 set -u
@@ -39,12 +38,10 @@ declare -A map_exclusividade
 declare -A jogos_gerados_sessao
 
 # ==============================================================================
-# ALGORITMOS NATIVOS E LOGGING
-# Padrão Unix: Toda a UI e logs vão para STDERR (>&2). STDOUT fica 100% puro.
+# ALGORITMOS NATIVOS E LOGGING (STDERR >&2)
 # ==============================================================================
 log_info()    { printf "\033[1;36m[INFO]\033[0m %s\n" "$1" >&2; }
 log_success() { printf "\033[1;32m[SUCESSO]\033[0m %s\n" "$1" >&2; }
-log_warn()    { printf "\033[1;33m[AVISO]\033[0m %s\n" "$1" >&2; }
 log_error()   { printf "\033[1;31m[ERRO]\033[0m %s\n" "$1" >&2; }
 
 sort_numeric_array() {
@@ -67,15 +64,19 @@ show_help() {
     cat << EOF >&2
 Uso: $0 [OPÇÕES] [DEZENAS] [ANALISE] [QTD_JOGOS] [MIN_MEDIA] [REPETIDAS]
 
+FILTROS ATIVOS POR PADRÃO:
+  - Tendência de Extremidades: ATIVO (01-04 | 22-25)
+  - Exclusividade Histórica: ATIVO (Bloqueio de repetidos)
+
 OPÇÕES:
-  -a          Desativa o bloqueio de exclusividade (Permite gerar jogos passados).
+  -a          Desativa o bloqueio de exclusividade.
   -m [VALOR]  Fixa a quantidade de dezenas do Padrão dos Nove (4, 5 ou 6).
   -p [PERFIL] Carrega perfil de aposta (explorador | conservador).
-  -s [ARQ]    Exportação paralela: Salva dados no CSV de forma independente.
+  -s [ARQ]    Salva dados brutos no CSV de forma independente.
   -h          Exibe este menu de ajuda.
 
-EXEMPLO MANUAL E REDIRECIONAMENTO UNIX:
-  $0 -m 5 15 50 20 9.2 "8-9" > meus_jogos_limpos.csv
+EXEMPLO MANUAL E REDIRECIONAMENTO UNIX (Auditoria):
+  $0 -m 5 15 50 20 9.2 "8-9" > relatorio_auditoria.txt
 EOF
     exit 0
 }
@@ -190,8 +191,6 @@ bootstrap_data() {
 generate_engine() {
     local pool_size=${#POOL_ARRAY[@]}
     local count_jogos=0
-    
-    # A variável atuará como Métrica de Performance (Micro-ciclos)
     local tentativas=0 
     
     local min_media_clean="${MIN_MEDIA//,/.}"
@@ -203,21 +202,13 @@ generate_engine() {
     local status_m9="Dinâmico 4-6"
     [[ -n "$MAGIC_9_MODE" ]] && status_m9="$MAGIC_9_MODE"
     
-    log_info "Filtros ativos: $status_exc | Padrão 9 ($status_m9 dezenas) | Primos (5-7) | Paridade (7-9 ímpares)."
+    log_info "Filtros ativos: Extremidades | $status_exc | Padrão 9 ($status_m9 dezenas) | Primos (5-7) | Paridade (7-9 ímpares)."
     log_info "Perfil Operacional carregado: ${MODO_PERFIL^^} (Análise: $ANALISE concursos)."
     log_info "Iniciando processamento estocástico guiado..."
 
-    local header_csv="ID_JOGO,D1,D2,D3,D4,D5,D6,D7,D8,D9,D10,D11,D12,D13,D14,D15,MEDIA_HIST,REPETIDAS,IMPARES,PRIMOS,M9"
-
-    # Smart Routing: Só imprime o CSV no STDOUT se o comando estiver redirecionado (Pipe ou Arquivo)
-    if [[ ! -t 1 ]]; then
-        echo "$header_csv"
-    fi
-
-    # Exportação forçada com flag -s
     if [[ $EXPORTAR -eq 1 ]]; then
         mkdir -p "$(dirname "$ARQUIVO_CSV")"
-        echo "$header_csv" > "$ARQUIVO_CSV"
+        echo "ID_JOGO,D1,D2,D3,D4,D5,D6,D7,D8,D9,D10,D11,D12,D13,D14,D15,MEDIA_HIST,REPETIDAS,IMPARES,PRIMOS,M9" > "$ARQUIVO_CSV"
     fi
 
     while [ $count_jogos -lt $QTD_JOGOS ]; do
@@ -242,7 +233,9 @@ generate_engine() {
         
         sort_numeric_array candidate
         
-        if (( 10#${candidate[0]} > 4 || 10#${candidate[DEZENAS_CARTAO-1]} < 22 )); then continue; fi
+        if (( 10#${candidate[0]} > 4 || 10#${candidate[DEZENAS_CARTAO-1]} < 22 )); then 
+            continue
+        fi
         
         local impares=0 primos=0 m9_count=0 acertos_ult=0
         
@@ -285,37 +278,38 @@ generate_engine() {
                 ((count_jogos++))
 
                 local media_historica_display=$(printf "%.2f" "$((media_historica_int))e-2")
-                # Substitui ponto por vírgula para UX humanizada (padrão PT-BR)
                 local media_formatada="${media_historica_display/./,}"
+                local pares=$(( 15 - impares ))
                 
-                local dezenas_csv=$(echo "$jogo_formatado" | tr ' ' ',')
-                local linha_csv="$count_jogos,$dezenas_csv,$media_historica_display,$acertos_ult,$impares,$primos,$m9_count"
-                
-                # ==============================================================
-                # SMART ROUTING: Direcionamento Invisível do CSV
-                # ==============================================================
-                # Só joga o dado bruto no STDOUT se o Terminal (fd 1) não for a tela
-                if [[ ! -t 1 ]]; then
-                    echo "$linha_csv"
-                fi
-                
+                # Salvamento de Dados Brutos Isolado (CSV Background)
                 if [[ $EXPORTAR -eq 1 ]]; then
+                    local dezenas_csv=$(echo "$jogo_formatado" | tr ' ' ',')
+                    local linha_csv="$count_jogos,$dezenas_csv,$media_historica_display,$acertos_ult,$impares,$primos,$m9_count"
                     echo "$linha_csv" >> "$ARQUIVO_CSV"
                 fi
-                
+
                 # ==============================================================
-                # TERMINAL UX: Saída Visual Elegante via STDERR
+                # STDOUT: SAÍDA PRINCIPAL (Matriz de Auditoria)
+                # Smart Routing: Envia limpo para arquivos ou colorido no terminal
                 # ==============================================================
-                printf "\033[1;32m[JOGO %02d]\033[0m → %s | \033[1mMédia: %s\033[0m\n" "$count_jogos" "$jogo_formatado" "$media_formatada" >&2
+                if [[ ! -t 1 ]]; then
+                    # Sem ANSI (para arquivos de log limpos ex: > auditoria.txt)
+                    printf "[JOGO %02d] → %s | Méd: %s | P: %d | I/P: %d/%d | M9: %d | R: %d\n" \
+                        "$count_jogos" "$jogo_formatado" "$media_formatada" "$primos" "$impares" "$pares" "$m9_count" "$acertos_ult"
+                else
+                    # Com ANSI (para leitura visual destacada no Terminal)
+                    printf "\033[1;32m[JOGO %02d]\033[0m → %s | \033[1mMéd:\033[0m %s | \033[1mP:\033[0m %d | \033[1mI/P:\033[0m %d/%d | \033[1mM9:\033[0m %d | \033[1mR:\033[0m %d\n" \
+                        "$count_jogos" "$jogo_formatado" "$media_formatada" "$primos" "$impares" "$pares" "$m9_count" "$acertos_ult"
+                fi
             fi
         fi
     done
 
     # ==============================================================================
-    # RELATÓRIO DE INTELIGÊNCIA & RESUMO FINAL (Encaminhado estritamente ao STDERR)
+    # MÉTRICAS FINAIS DE SUCESSO E PERFORMANCE (Via STDERR)
     # ==============================================================================
-    log_success "Processamento estocástico concluído: $QTD_JOGOS jogos gerados." >&2
-    log_info "Motor exigiu $tentativas micro-ciclos de força bruta guiada."
+    log_success "Motor exigiu $tentativas micro-ciclos de força bruta guiada." >&2
+    log_success "Processamento estocástico concluído: $QTD_JOGOS jogos gerados."
 }
 
 # ==============================================================================
